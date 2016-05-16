@@ -419,10 +419,16 @@ static int slbt_exec_link_create_dep_file(
 	char **	parg;
 	char *	popt;
 	char *	plib;
+	const char *prefix;
+	char	cwd[PATH_MAX];
 	char	depfile[PATH_MAX];
+	bool    pathmode;
 
 	if (ectx->fdeps)
 		fclose(ectx->fdeps);
+
+	if (!getcwd(cwd,sizeof(cwd)))
+		return -1;
 
 	if ((size_t)snprintf(depfile,sizeof(depfile),"%s.slibtool.deps",
 				libfilename)
@@ -436,23 +442,65 @@ static int slbt_exec_link_create_dep_file(
 		popt = 0;
 		plib = 0;
 
-		if (!strcmp(*parg,"-l")) {
+		if (!strcmp(*parg,"-L")) {
+			pathmode = true;
+			prefix = "-L";
+			popt = *parg++;
+			plib = *parg;
+		} else if (!strncmp(*parg,"-L",2)) {
+			pathmode = true;
+			prefix = "-L";
+			popt = *parg;
+			plib = popt + 2;
+		} else if (!strcmp(*parg,"-l")) {
+			pathmode = false;
+			prefix = "-l";
 			popt = *parg++;
 			plib = *parg;
 		} else if (!strcmp(*parg,"--library")) {
+			pathmode = false;
+			prefix = "-l";
 			popt = *parg++;
 			plib = *parg;
 		} else if (!strncmp(*parg,"-l",2)) {
+			pathmode = false;
+			prefix = "-l";
 			popt = *parg;
 			plib = popt + 2;
 		} else if (!strncmp(*parg,"--library=",10)) {
+			pathmode = false;
+			prefix = "-l";
 			popt = *parg;
 			plib = popt + 10;
 		}
 
-		if (plib)
+		if (plib) {
+			if (!pathmode || plib[0] == '/') {
+				if (fprintf(ectx->fdeps,"%s%s\n",prefix,plib) < 0)
+					return -1;
+			} else {
+				if (fprintf(ectx->fdeps,"%s%s/%s\n",prefix,cwd,plib) < 0)
+					return -1;
+			}
+		}
+
+		if ((popt = strrchr(*parg,'.')) && !strcmp(popt,".la")) {
+			slbt_adjust_input_argument(*parg,".la",".la",true);
+			if ((plib = strrchr(*parg,'/'))) {
+				*plib++ = '\0';
+				if (fprintf(ectx->fdeps,"-L%s/%s\n",cwd,*parg) < 0)
+					return -1;
+			} else {
+				if (fprintf(ectx->fdeps,"-L%s\n",cwd) < 0)
+					return -1;
+			}
+			/* libfoo.la -> -lfoo */
+			plib += 3;
+			popt = strrchr(plib, '.');
+			*popt = '\0';
 			if (fprintf(ectx->fdeps,"-l%s\n",plib) < 0)
 				return -1;
+		}
 	}
 
 	if (fflush(ectx->fdeps))
@@ -606,11 +654,13 @@ static int slbt_exec_link_create_archive(
 	if ((slbt_spawn(ectx,true) < 0) || ectx->exitcode)
 		return -1;
 
+#if 0
 	/* input objects associated with .la archives */
 	for (parg=ectx->cargv; *parg; parg++)
 		if (slbt_adjust_input_argument(*parg,".la",".a",fpic))
 			if (slbt_archive_import(dctx,ectx,output,*parg))
 				return -1;
+#endif
 
 	/* ranlib argv */
 	if ((size_t)snprintf(program,sizeof(program),"%s",
@@ -661,7 +711,7 @@ static int slbt_exec_link_create_library(
 	const struct slbt_driver_ctx *	dctx,
 	struct slbt_exec_ctx *		ectx,
 	const char *			dsofilename,
-	const char *			relfilename)
+	const char *			dsolinkname)
 {
 	char ** parg;
 	char	cwd    [PATH_MAX];
@@ -696,10 +746,27 @@ static int slbt_exec_link_create_library(
 	/* -soname */
 	if ((dctx->cctx->drvflags & SLBT_DRIVER_IMAGE_MACHO)) {
 		(void)0;
-	} else if (!(dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION)) {
-		if ((size_t)snprintf(soname,sizeof(soname),"-Wl,%s%s%s.%d",
-					dctx->cctx->settings.dsoprefix,
+	} else if ((dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) ||
+		  (!dctx->cctx->verinfo.verinfo && dctx->cctx->release)) {
+		if ((size_t)snprintf(soname,sizeof(soname),"-Wl,%s%s%s%s%s",
+					(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+					    ? "" : dctx->cctx->settings.dsoprefix,
 					dctx->cctx->libname,
+					(dctx->cctx->release) ? "-" : "",
+					(dctx->cctx->release) ? dctx->cctx->release : "",
+					dctx->cctx->settings.dsosuffix)
+				>= sizeof(soname))
+			return -1;
+
+		*ectx->soname  = "-Wl,-soname";
+		*ectx->lsoname = soname;
+	} else {
+		if ((size_t)snprintf(soname,sizeof(soname),"-Wl,%s%s%s%s%s.%d",
+					(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+					    ? "" : dctx->cctx->settings.dsoprefix,
+					dctx->cctx->libname,
+					(dctx->cctx->release) ? "-" : "",
+					(dctx->cctx->release) ? dctx->cctx->release : "",
 					dctx->cctx->settings.dsosuffix,
 					dctx->cctx->verinfo.major)
 				>= sizeof(soname))
@@ -707,17 +774,7 @@ static int slbt_exec_link_create_library(
 
 		*ectx->soname  = "-Wl,-soname";
 		*ectx->lsoname = soname;
-	} else if (relfilename) {
-		if ((size_t)snprintf(soname,sizeof(soname),"-Wl,%s%s-%s%s",
-					dctx->cctx->settings.dsoprefix,
-					dctx->cctx->libname,
-					dctx->cctx->release,
-					dctx->cctx->settings.dsosuffix)
-				>= sizeof(soname))
-			return -1;
 
-		*ectx->soname  = "-Wl,-soname";
-		*ectx->lsoname = soname;
 	}
 
 	/* PE: --output-def */
@@ -740,9 +797,8 @@ static int slbt_exec_link_create_library(
 	}
 
 	/* output */
-	if (relfilename) {
-		strcpy(output,relfilename);
-	} else if (dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) {
+	if ((dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) ||
+	   (!dctx->cctx->verinfo.verinfo && dctx->cctx->release)) {
 		strcpy(output,dsofilename);
 	} else {
 		if ((size_t)snprintf(output,sizeof(output),"%s.%d.%d.%d",
@@ -785,7 +841,7 @@ static int slbt_exec_link_create_library(
 			return slbt_exec_link_exit(&depsmeta,-1);
 
 	/* .deps */
-	if (slbt_exec_link_create_dep_file(ectx,ectx->argv,dsofilename))
+	if (slbt_exec_link_create_dep_file(ectx,ectx->argv,dsolinkname))
 		return slbt_exec_link_exit(&depsmeta,-1);
 
 	/* spawn */
@@ -957,29 +1013,26 @@ static int slbt_exec_link_create_library_symlink(
 	char	target[PATH_MAX];
 	char	lnkname[PATH_MAX];
 
-	if (ectx->relfilename) {
-		strcpy(target,ectx->relfilename);
-		sprintf(lnkname,"%s.release",ectx->dsofilename);
-
-		if (slbt_create_symlink(
-				dctx,ectx,
-				target,lnkname,
-				false))
-			return -1;
-	} else
+	if ((dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) ||
+	    (!dctx->cctx->verinfo.verinfo && dctx->cctx->release))
+		strcpy(target,ectx->dsofilename);
+	else
 		sprintf(target,"%s.%d.%d.%d",
 			ectx->dsofilename,
 			dctx->cctx->verinfo.major,
 			dctx->cctx->verinfo.minor,
 			dctx->cctx->verinfo.revision);
 
-	if (fmajor)
-		sprintf(lnkname,"%s.%d",
-			ectx->dsofilename,
-			dctx->cctx->verinfo.major);
-
-	else
-		strcpy(lnkname,ectx->dsofilename);
+	if (fmajor) {
+		if ((dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) ||
+		    (!dctx->cctx->verinfo.verinfo && dctx->cctx->release))
+			sprintf(lnkname,"%s.release", ectx->dsolinkname);
+		else
+			sprintf(lnkname,"%s.%d",
+				ectx->dsofilename,
+				dctx->cctx->verinfo.major);
+	} else
+		strcpy(lnkname,ectx->dsolinkname);
 
 	if (fmajor && (dctx->cctx->drvflags & SLBT_DRIVER_IMAGE_PE))
 		return slbt_copy_file(
@@ -1021,9 +1074,12 @@ int slbt_exec_link(
 		return 0;
 
 	/* libfoo.so.x.y.z */
-	if ((size_t)snprintf(soxyz,sizeof(soxyz),"%s%s%s.%d.%d.%d",
-				dctx->cctx->settings.dsoprefix,
+	if ((size_t)snprintf(soxyz,sizeof(soxyz),"%s%s%s%s%s.%d.%d.%d",
+				(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+				    ? "" : dctx->cctx->settings.dsoprefix,
 				dctx->cctx->libname,
+				(dctx->cctx->release) ? "-" : "",
+				(dctx->cctx->release) ? dctx->cctx->release : "",
 				dctx->cctx->settings.dsosuffix,
 				dctx->cctx->verinfo.major,
 				dctx->cctx->verinfo.minor,
@@ -1032,11 +1088,24 @@ int slbt_exec_link(
 		return -1;
 
 	/* libfoo.so.x */
-	sprintf(soname,"%s%s%s.%d",
-		dctx->cctx->settings.dsoprefix,
-		dctx->cctx->libname,
-		dctx->cctx->settings.dsosuffix,
-		dctx->cctx->verinfo.major);
+	if ((dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION) ||
+	    (!dctx->cctx->verinfo.verinfo && dctx->cctx->release))
+		sprintf(soname,"%s%s%s%s%s",
+			(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+			    ? "" : dctx->cctx->settings.dsoprefix,
+			dctx->cctx->libname,
+			(dctx->cctx->release) ? "-" : "",
+			(dctx->cctx->release) ? dctx->cctx->release : "",
+			dctx->cctx->settings.dsosuffix);
+	else
+		sprintf(soname,"%s%s%s%s%s.%d",
+			(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+			    ? "" : dctx->cctx->settings.dsoprefix,
+			dctx->cctx->libname,
+			(dctx->cctx->release) ? "-" : "",
+			(dctx->cctx->release) ? dctx->cctx->release : "",
+			dctx->cctx->settings.dsosuffix,
+			dctx->cctx->verinfo.major);
 
 	/* libfoo.so */
 	sprintf(solnk,"%s%s%s",
@@ -1048,7 +1117,8 @@ int slbt_exec_link(
 
 	/* libfoo.a */
 	sprintf(arname,"%s%s%s",
-		dctx->cctx->settings.arprefix,
+		(dctx->cctx->drvflags & SLBT_DRIVER_MODULE)
+			? "" : dctx->cctx->settings.arprefix,
 		dctx->cctx->libname,
 		dctx->cctx->settings.arsuffix);
 
@@ -1117,7 +1187,7 @@ int slbt_exec_link(
 		if (slbt_exec_link_create_library(
 				dctx,ectx,
 				ectx->dsofilename,
-				ectx->relfilename)) {
+				ectx->dsolinkname)) {
 			slbt_free_exec_ctx(actx);
 			return -1;
 		}
@@ -1132,14 +1202,6 @@ int slbt_exec_link(
 			}
 
 			/* symlink: libfoo.so --> libfoo.so.x.y.z */
-			if (slbt_exec_link_create_library_symlink(
-					dctx,ectx,
-					false)) {
-				slbt_free_exec_ctx(actx);
-				return -1;
-			}
-		} else if (ectx->relfilename) {
-			/* symlink: libfoo.so --> libfoo-x.y.z.so */
 			if (slbt_exec_link_create_library_symlink(
 					dctx,ectx,
 					false)) {
@@ -1210,7 +1272,8 @@ int slbt_exec_link(
 		sscanf(dctx->cctx->verinfo.verinfo,"%d:%d:%d",
 			&current,&revision,&age);
 
-	fnover  = !!(dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION);
+	fnover  = !!(dctx->cctx->drvflags & SLBT_DRIVER_AVOID_VERSION ||
+		    (!dctx->cctx->verinfo.verinfo && dctx->cctx->release));
 	fvernum = !!(dctx->cctx->verinfo.vernumber);
 	verinfo = slbt_source_version();
 
@@ -1261,15 +1324,15 @@ int slbt_exec_link(
 		verinfo->commit,
 
 		/* dlname */
-		fnover ? solnk : soxyz,
+		soname,
 
 		/* library_names */
-		fnover ? solnk : soxyz,
-		fnover ? solnk : soname,
+		fnover ? soname : soxyz,
+		soname,
 		solnk,
 
 		/* old_library */
-		arname,
+		(dctx->cctx->drvflags & SLBT_DRIVER_DISABLE_STATIC) ? "" : arname,
 
 		/* inherited_linker_flags, dependency_libs, weak_library_names */
 		"","","",

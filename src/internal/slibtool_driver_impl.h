@@ -57,6 +57,7 @@ enum app_tags {
 	TAG_AVOID_VERSION,
 	TAG_COMPILER_FLAG,
 	TAG_VERBATIM_FLAG,
+	TAG_UNIMPLEMENTED,
 };
 
 struct slbt_host_strs {

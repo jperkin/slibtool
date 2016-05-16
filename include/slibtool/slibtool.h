@@ -135,7 +135,7 @@ struct slbt_exec_ctx {
 	char *	lafilename;
 	char *	laifilename;
 	char *	dsofilename;
-	char *	relfilename;
+	char *	dsolinkname;
 	char *	deffilename;
 	char *	rpathfilename;
 	char *	dimpfilename;

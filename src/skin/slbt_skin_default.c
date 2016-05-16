@@ -231,5 +231,12 @@ const struct argv_option slbt_default_options[] = {
 				ARGV_OPTION_HYBRID_ONLY,0,0,
 				"disallow unresolved references"},
 
+	/*
+	 * Unimplemented options that we simply discard for now
+	 */
+	{"thread-safe",		0,TAG_UNIMPLEMENTED,ARGV_OPTARG_NONE,
+				ARGV_OPTION_HYBRID_ONLY,0,0,
+				"pass thread_safe_flag_spec (unimplemented)"},
+
 	{0,0,0,0,0,0,0,0}
 };

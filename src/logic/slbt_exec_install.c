@@ -386,10 +386,10 @@ static int slbt_exec_install_entry(
 	dot = strrchr(srcfile,'.');
 	strcpy(dot,dctx->cctx->settings.arsuffix);
 
-	if (slbt_copy_file(dctx,ectx,
-			srcfile,
-			dest ? (char *)dest->arg : *dst))
-		return -1;
+	if (!(dctx->cctx->drvflags & SLBT_DRIVER_DISABLE_STATIC))
+		if (slbt_copy_file(dctx,ectx,srcfile,
+				   dest ? (char *)dest->arg : *dst))
+			return -1;
 
 	/* dot/suffix */
 	strcpy(slnkname,srcfile);
