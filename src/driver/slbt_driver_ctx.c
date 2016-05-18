@@ -800,7 +800,7 @@ int slbt_get_driver_ctx(
 	memset(&cctx,0,sizeof(cctx));
 
 	/* shared and static objects: enable by default, disable by ~switch */
-	cctx.drvflags = flags | SLBT_DRIVER_SHARED | SLBT_DRIVER_STATIC;
+	cctx.drvflags = flags | SLBT_DRIVER_STATIC;
 
 	/* full annotation when annotation is on; */
 	cctx.drvflags |= SLBT_DRIVER_ANNOTATE_FULL;
@@ -957,6 +957,7 @@ int slbt_get_driver_ctx(
 
 				case TAG_RPATH:
 					cctx.rpath = entry->arg;
+					cctx.drvflags |= SLBT_DRIVER_SHARED;
 					break;
 
 				case TAG_RELEASE:
