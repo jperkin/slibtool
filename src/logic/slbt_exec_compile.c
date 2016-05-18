@@ -57,7 +57,7 @@ int  slbt_exec_compile(
 		return -1;
 
 	/* .libs directory */
-	if (dctx->cctx->drvflags & SLBT_DRIVER_SHARED)
+	//if (dctx->cctx->drvflags & SLBT_DRIVER_SHARED)
 		if (slbt_mkdir(ectx->ldirname)) {
 			slbt_free_exec_ctx(actx);
 			return -1;
@@ -68,7 +68,7 @@ int  slbt_exec_compile(
 	ectx->argv    = ectx->cargv;
 
 	/* shared library object */
-	if (dctx->cctx->drvflags & SLBT_DRIVER_SHARED) {
+	//if (dctx->cctx->drvflags & SLBT_DRIVER_SHARED) {
 		if (!(dctx->cctx->drvflags & SLBT_DRIVER_ANTI_PIC)) {
 			*ectx->dpic = "-DPIC";
 			*ectx->fpic = "-fPIC";
@@ -97,7 +97,7 @@ int  slbt_exec_compile(
 			slbt_free_exec_ctx(actx);
 			return -1;
 		}
-	}
+	//}
 
 	/* static archive object */
 	if (dctx->cctx->drvflags & SLBT_DRIVER_STATIC) {
